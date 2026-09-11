@@ -10,7 +10,15 @@ class DnsMasq
 
     public string $resolverPath = '/etc/resolver';
 
-    public function __construct(public Brew $brew, public CommandLine $cli, public Filesystem $files, public Configuration $configuration) {}
+    public string $resolvedConfigPath = '/etc/systemd/resolved.conf.d/valet.conf';
+
+    public OperatingSystem $operatingSystem;
+
+    public function __construct(public Brew $brew, public CommandLine $cli, public Filesystem $files, public Configuration $configuration,
+        ?OperatingSystem $operatingSystem = null)
+    {
+        $this->operatingSystem = $operatingSystem ?? new OperatingSystem;
+    }
 
     /**
      * Install and configure DnsMasq.
@@ -44,7 +52,10 @@ class DnsMasq
 
         // As Laravel Herd uses the same DnsMasq resolver, we should only
         // delete it if Herd is not installed.
-        if (! $this->files->exists('/Applications/Herd.app')) {
+        if ($this->operatingSystem->isLinux()) {
+            $this->files->unlink($this->resolvedConfigPath);
+            $this->restartSystemResolver();
+        } elseif (! $this->files->exists('/Applications/Herd.app')) {
             $tld = $this->configuration->read()['tld'];
             $this->files->unlink($this->resolverPath.'/'.$tld);
         }
@@ -109,11 +120,17 @@ class DnsMasq
         $tldConfigFile = $this->dnsmasqUserConfigDir().'tld-'.$tld.'.conf';
         $loopback = $this->configuration->read()['loopback'];
 
-        $this->files->putAsUser($tldConfigFile,
-            'address=/.'.$tld.'/'.$loopback.PHP_EOL
+        $contents = 'address=/.'.$tld.'/'.$loopback.PHP_EOL
             .'address=/.'.$tld.'/::1'.PHP_EOL // IPV6 loopback prevents Safari "Happy Eyeballs" slow load
-            .'listen-address='.$loopback.PHP_EOL
-        );
+            .'listen-address='.$loopback.PHP_EOL;
+
+        if ($this->operatingSystem->isLinux()) {
+            $contents .= 'port=5354'.PHP_EOL
+                .'bind-interfaces'.PHP_EOL
+                .'resolv-file=/run/systemd/resolve/resolv.conf'.PHP_EOL;
+        }
+
+        $this->files->putAsUser($tldConfigFile, $contents);
     }
 
     /**
@@ -121,6 +138,20 @@ class DnsMasq
      */
     public function createTldResolver(string $tld): void
     {
+        if ($this->operatingSystem->isLinux()) {
+            $loopback = $this->configuration->read()['loopback'];
+            $this->files->ensureDirExists(dirname($this->resolvedConfigPath));
+            $this->files->put(
+                $this->resolvedConfigPath,
+                '[Resolve]'.PHP_EOL
+                .'DNS='.$loopback.':5354'.PHP_EOL
+                .'Domains=~'.$tld.PHP_EOL
+            );
+            $this->restartSystemResolver();
+
+            return;
+        }
+
         $this->files->ensureDirExists($this->resolverPath);
         $loopback = $this->configuration->read()['loopback'];
 
@@ -132,7 +163,9 @@ class DnsMasq
      */
     public function updateTld(string $oldTld, string $newTld): void
     {
-        $this->files->unlink($this->resolverPath.'/'.$oldTld);
+        if (! $this->operatingSystem->isLinux()) {
+            $this->files->unlink($this->resolverPath.'/'.$oldTld);
+        }
         $this->files->unlink($this->dnsmasqUserConfigDir().'tld-'.$oldTld.'.conf');
 
         $this->install($newTld);
@@ -153,6 +186,14 @@ class DnsMasq
      */
     public function dnsmasqUserConfigDir(): string
     {
-        return $_SERVER['HOME'].'/.config/valet/dnsmasq.d/';
+        return VALET_HOME_PATH.'/dnsmasq.d/';
+    }
+
+    /**
+     * Reload systemd-resolved after changing its Valet route.
+     */
+    public function restartSystemResolver(): void
+    {
+        $this->cli->quietly('sudo systemctl restart systemd-resolved');
     }
 }

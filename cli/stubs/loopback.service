@@ -1,0 +1,12 @@
+[Unit]
+Description=Laravel Valet loopback alias
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/ip address replace VALET_LOOPBACK/32 dev lo
+ExecStop=-/usr/bin/ip address del VALET_LOOPBACK/32 dev lo
+
+[Install]
+WantedBy=multi-user.target

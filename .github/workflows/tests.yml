@@ -14,14 +14,15 @@ permissions:
 
 jobs:
   tests:
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: true
       matrix:
+        os: [macos-latest, ubuntu-latest]
         php: ['8.0', 8.1, 8.2, 8.3, 8.4, 8.5]
 
-    name: PHP ${{ matrix.php }}
+    name: ${{ matrix.os }} / PHP ${{ matrix.php }}
 
     steps:
       - name: Checkout code

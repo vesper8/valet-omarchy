@@ -19,6 +19,10 @@ In other words, a blazing fast Laravel development environment that uses roughly
 
 Documentation for Valet can be found on the [Laravel website](https://laravel.com/docs/valet).
 
+## Experimental Linux Support
+
+Linux support is under active development and is not part of a stable Valet release yet. See the [Linux installation guide](docs/linux.md) to test a development branch on a systemd-based distribution, including Omarchy and other Arch Linux derivatives.
+
 ## Contributing
 
 Thank you for considering contributing to Valet! You can read the contribution guide [here](.github/CONTRIBUTING.md).

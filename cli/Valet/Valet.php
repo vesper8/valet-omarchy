@@ -50,7 +50,7 @@ class Valet
         $this->files->ensureDirExists('/etc/sudoers.d');
 
         $this->files->put('/etc/sudoers.d/valet', 'Cmnd_Alias VALET = '.BREW_PREFIX.'/bin/valet *
-%admin ALL=(root) NOPASSWD:SETENV: VALET'.PHP_EOL);
+'.sudoers_identity().' ALL=(root) NOPASSWD:SETENV: VALET'.PHP_EOL);
     }
 
     /**
@@ -66,7 +66,7 @@ class Valet
      */
     public function composerGlobalDiagnose(): void
     {
-        $this->cli->runAsUser('composer global diagnose');
+        $this->cli->runAsUser(BREW_PREFIX.'/bin/composer global diagnose');
     }
 
     /**
@@ -74,7 +74,7 @@ class Valet
      */
     public function composerGlobalUpdate(): void
     {
-        $this->cli->runAsUser('composer global update');
+        $this->cli->runAsUser(BREW_PREFIX.'/bin/composer global update');
     }
 
     public function forceUninstallText(): string

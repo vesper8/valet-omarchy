@@ -11,7 +11,13 @@ use UnexpectedValueException;
 
 class Site
 {
-    public function __construct(public Brew $brew, public Configuration $config, public CommandLine $cli, public Filesystem $files) {}
+    public OperatingSystem $operatingSystem;
+
+    public function __construct(public Brew $brew, public Configuration $config, public CommandLine $cli, public Filesystem $files,
+        ?OperatingSystem $operatingSystem = null)
+    {
+        $this->operatingSystem = $operatingSystem ?? new OperatingSystem;
+    }
 
     /**
      * Get the name of the site.
@@ -314,10 +320,14 @@ class Site
      */
     public function getPhpVersion(string $url): string
     {
-        $defaultPhpVersion = $this->brew->linkedPhp();
         $phpVersion = PhpFpm::normalizePhpVersion($this->customPhpVersion($url));
+
         if (empty($phpVersion)) {
-            $phpVersion = PhpFpm::normalizePhpVersion($defaultPhpVersion);
+            try {
+                $phpVersion = PhpFpm::normalizePhpVersion($this->brew->linkedPhp());
+            } catch (DomainException|UnexpectedValueException $e) {
+                return 'unknown';
+            }
         }
 
         return $phpVersion;
@@ -544,6 +554,11 @@ class Site
         $caKeyPath = $this->caPath('LaravelValetCASelfSigned.key');
 
         if ($this->files->exists($caKeyPath) && $this->files->exists($caPemPath)) {
+            if ($this->operatingSystem->isLinux()) {
+                $this->trustCa($caPemPath);
+
+                return;
+            }
 
             $isTrusted = $this->cli->run(sprintf(
                 'security verify-cert -c "%s"', $caPemPath
@@ -566,10 +581,14 @@ class Site
             $this->files->unlink($caPemPath);
         }
 
-        $this->cli->run(sprintf(
-            'sudo security delete-certificate -c "%s" /Library/Keychains/System.keychain',
-            $cName
-        ));
+        if ($this->operatingSystem->isMacOS()) {
+            $this->cli->run(sprintf(
+                'sudo security delete-certificate -c "%s" /Library/Keychains/System.keychain',
+                $cName
+            ));
+        } else {
+            $this->untrustLinuxCa();
+        }
 
         $this->cli->runAsUser(sprintf(
             'openssl req -new -newkey rsa:2048 -days %s -nodes -x509 -subj "/C=/ST=/O=%s/localityName=/commonName=%s/organizationalUnitName=Developers/emailAddress=%s/" -keyout "%s" -out "%s" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,digitalSignature,keyCertSign" -addext "subjectKeyIdentifier=hash"',
@@ -593,10 +612,14 @@ class Site
 
         $cName = 'Laravel Valet CA Self Signed CN';
 
-        $this->cli->run(sprintf(
-            'sudo security delete-certificate -c "%s" /Library/Keychains/System.keychain',
-            $cName
-        ));
+        if ($this->operatingSystem->isMacOS()) {
+            $this->cli->run(sprintf(
+                'sudo security delete-certificate -c "%s" /Library/Keychains/System.keychain',
+                $cName
+            ));
+        } else {
+            $this->untrustLinuxCa();
+        }
     }
 
     /**
@@ -657,11 +680,18 @@ class Site
     }
 
     /**
-     * Trust the given root certificate file in the macOS Keychain.
+     * Trust the given root certificate file.
      */
     public function trustCa(string $caPemPath): void
     {
         info('Trusting Laravel Valet Certificate Authority...');
+
+        if ($this->operatingSystem->isLinux()) {
+            $this->trustLinuxCa($caPemPath);
+
+            return;
+        }
+
         $result = $this->cli->run(sprintf(
             'sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "%s"',
             $caPemPath
@@ -676,9 +706,121 @@ class Site
      */
     public function trustCertificate(string $crtPath): void
     {
+        if ($this->operatingSystem->isLinux()) {
+            $this->trustCertificateInLinuxNssDatabases($crtPath, basename($crtPath, '.crt'));
+
+            return;
+        }
+
         $this->cli->run(sprintf(
             'sudo security add-trusted-cert -d -r trustAsRoot -k /Library/Keychains/System.keychain "%s"', $crtPath
         ));
+    }
+
+    /**
+     * Trust Valet's CA in Linux's system and browser certificate stores.
+     */
+    public function trustLinuxCa(string $caPemPath): void
+    {
+        $systemCaPath = $this->linuxCaPath();
+
+        $this->files->copy($caPemPath, $systemCaPath);
+        $this->cli->run('sudo '.$this->linuxCaUpdateCommand());
+        $this->trustCertificateInLinuxNssDatabases($caPemPath, 'Laravel Valet CA');
+    }
+
+    /**
+     * Remove Valet's CA from Linux's system and browser certificate stores.
+     */
+    public function untrustLinuxCa(): void
+    {
+        $systemCaPath = $this->linuxCaPath();
+
+        if ($this->files->exists($systemCaPath)) {
+            $this->files->unlink($systemCaPath);
+            $this->cli->run('sudo '.$this->linuxCaUpdateCommand());
+        }
+
+        foreach ($this->linuxNssDatabasePaths() as $databasePath) {
+            $this->cli->quietlyAsUser(sprintf(
+                'certutil -D -d %s -n %s',
+                escapeshellarg('sql:'.$databasePath),
+                escapeshellarg('Laravel Valet CA')
+            ));
+        }
+    }
+
+    /**
+     * Trust a certificate in Chromium and Firefox NSS databases when present.
+     */
+    public function trustCertificateInLinuxNssDatabases(string $certificatePath, string $nickname): void
+    {
+        $chromiumDatabasePath = $this->operatingSystem->userHomePath().'/.pki/nssdb';
+
+        if (! $this->files->isDir($chromiumDatabasePath)) {
+            $this->cli->runAsUser('mkdir -p '.escapeshellarg($chromiumDatabasePath));
+            $this->cli->runAsUser(sprintf(
+                'certutil -N --empty-password -d %s',
+                escapeshellarg('sql:'.$chromiumDatabasePath)
+            ));
+        }
+
+        foreach ($this->linuxNssDatabasePaths() as $databasePath) {
+            $this->cli->quietlyAsUser(sprintf(
+                'certutil -D -d %s -n %s',
+                escapeshellarg('sql:'.$databasePath),
+                escapeshellarg($nickname)
+            ));
+            $this->cli->runAsUser(sprintf(
+                'certutil -A -d %s -n %s -t %s -i %s',
+                escapeshellarg('sql:'.$databasePath),
+                escapeshellarg($nickname),
+                escapeshellarg('C,,'),
+                escapeshellarg($certificatePath)
+            ));
+        }
+    }
+
+    /**
+     * Get existing NSS certificate database directories for the Valet user.
+     *
+     * @return array<int, string>
+     */
+    public function linuxNssDatabasePaths(): array
+    {
+        $home = $this->operatingSystem->userHomePath();
+        $paths = [$home.'/.pki/nssdb'];
+        $firefoxPaths = glob($home.'/.mozilla/firefox/*', GLOB_ONLYDIR) ?: [];
+
+        foreach ($firefoxPaths as $path) {
+            if ($this->files->exists($path.'/cert9.db')) {
+                $paths[] = $path;
+            }
+        }
+
+        return array_values(array_unique($paths));
+    }
+
+    /**
+     * Get the distribution-specific system CA anchor path.
+     */
+    public function linuxCaPath(): string
+    {
+        if ($this->files->exists('/usr/bin/update-ca-trust')) {
+            return '/etc/ca-certificates/trust-source/anchors/laravel-valet-ca.pem';
+        }
+
+        return '/usr/local/share/ca-certificates/laravel-valet-ca.crt';
+    }
+
+    /**
+     * Get the distribution-specific command for refreshing system CA trust.
+     */
+    public function linuxCaUpdateCommand(): string
+    {
+        return $this->files->exists('/usr/bin/update-ca-trust')
+            ? '/usr/bin/update-ca-trust'
+            : '/usr/sbin/update-ca-certificates';
     }
 
     /**
@@ -696,7 +838,7 @@ class Site
     public function buildSecureNginxServer(string $url, ?string $siteConf = null): string
     {
         if ($siteConf === null) {
-            $nginxVersion = str_replace('nginx version: nginx/', '', exec('nginx -v 2>&1'));
+            $nginxVersion = str_replace('nginx version: nginx/', '', exec(BREW_PREFIX.'/bin/nginx -v 2>&1'));
             $configFile = version_compare($nginxVersion, '1.25.1', '>=') ? 'secure.valet.conf' : 'secure.valet-legacy.conf';
 
             $siteConf = $this->replaceOldLoopbackWithNew(
@@ -774,12 +916,14 @@ class Site
             $this->files->unlink($this->certificatesPath($url, 'crt'));
         }
 
-        $this->cli->run(sprintf('sudo security delete-certificate -c "%s" /Library/Keychains/System.keychain', $url));
-        $this->cli->run(sprintf('sudo security delete-certificate -c "*.%s" /Library/Keychains/System.keychain', $url));
-        $this->cli->run(sprintf(
-            'sudo security find-certificate -e "%s%s" -a -Z | grep SHA-1 | sudo awk \'{system("security delete-certificate -Z \'$NF\' /Library/Keychains/System.keychain")}\'',
-            $url, '@laravel.valet'
-        ));
+        if ($this->operatingSystem->isMacOS()) {
+            $this->cli->run(sprintf('sudo security delete-certificate -c "%s" /Library/Keychains/System.keychain', $url));
+            $this->cli->run(sprintf('sudo security delete-certificate -c "*.%s" /Library/Keychains/System.keychain', $url));
+            $this->cli->run(sprintf(
+                'sudo security find-certificate -e "%s%s" -a -Z | grep SHA-1 | sudo awk \'{system("security delete-certificate -Z \'$NF\' /Library/Keychains/System.keychain")}\'',
+                $url, '@laravel.valet'
+            ));
+        }
 
         // If the user had isolated the PHP version for this site, swap out .sock file
         if ($phpVersion) {
@@ -842,7 +986,7 @@ class Site
                 $proxyUrl .= '.'.$tld;
             }
 
-            $nginxVersion = str_replace('nginx version: nginx/', '', exec('nginx -v 2>&1'));
+            $nginxVersion = str_replace('nginx version: nginx/', '', exec(BREW_PREFIX.'/bin/nginx -v 2>&1'));
             $configFile = version_compare($nginxVersion, '1.25.1', '>=') ? 'secure.proxy.valet.conf' : 'secure.proxy.valet-legacy.conf';
 
             $siteConf = $this->replaceOldLoopbackWithNew(
@@ -923,6 +1067,16 @@ class Site
      */
     public function removeLoopbackAlias(string $loopback): void
     {
+        if ($this->operatingSystem->isLinux()) {
+            $this->cli->run(sprintf(
+                'sudo /usr/bin/ip address del %s/32 dev lo', escapeshellarg($loopback)
+            ));
+
+            info('['.$loopback.'] loopback interface alias removed.');
+
+            return;
+        }
+
         $this->cli->run(sprintf(
             'sudo ifconfig lo0 -alias %s', $loopback
         ));
@@ -935,6 +1089,16 @@ class Site
      */
     public function addLoopbackAlias(string $loopback): void
     {
+        if ($this->operatingSystem->isLinux()) {
+            $this->cli->run(sprintf(
+                'sudo /usr/bin/ip address replace %s/32 dev lo', escapeshellarg($loopback)
+            ));
+
+            info('['.$loopback.'] loopback interface alias added.');
+
+            return;
+        }
+
         $this->cli->run(sprintf(
             'sudo ifconfig lo0 alias %s', $loopback
         ));
@@ -955,11 +1119,16 @@ class Site
                 str_replace(
                     'VALET_LOOPBACK',
                     $loopback,
-                    $this->files->getStub('loopback.plist')
+                    $this->files->getStub($this->operatingSystem->isLinux() ? 'loopback.service' : 'loopback.plist')
                 )
             );
 
-            info('['.$this->plistPath().'] persistent loopback interface alias launch daemon added.');
+            if ($this->operatingSystem->isLinux()) {
+                $this->cli->run('sudo /usr/bin/systemctl daemon-reload');
+                $this->cli->run('sudo /usr/bin/systemctl enable --now laravel-valet-loopback.service');
+            }
+
+            info('['.$this->plistPath().'] persistent loopback interface alias service added.');
         }
     }
 
@@ -969,9 +1138,17 @@ class Site
     public function removeLoopbackPlist(): void
     {
         if ($this->files->exists($this->plistPath())) {
+            if ($this->operatingSystem->isLinux()) {
+                $this->cli->run('sudo /usr/bin/systemctl disable --now laravel-valet-loopback.service');
+            }
+
             $this->files->unlink($this->plistPath());
 
-            info('['.$this->plistPath().'] persistent loopback interface alias launch daemon removed.');
+            if ($this->operatingSystem->isLinux()) {
+                $this->cli->run('sudo /usr/bin/systemctl daemon-reload');
+            }
+
+            info('['.$this->plistPath().'] persistent loopback interface alias service removed.');
         }
     }
 
@@ -1004,10 +1181,14 @@ class Site
     }
 
     /**
-     * Get the path to loopback LaunchDaemon.
+     * Get the path to the persistent loopback service.
      */
     public function plistPath(): string
     {
+        if ($this->operatingSystem->isLinux()) {
+            return '/etc/systemd/system/laravel-valet-loopback.service';
+        }
+
         return '/Library/LaunchDaemons/com.laravel.valet.loopback.plist';
     }
 

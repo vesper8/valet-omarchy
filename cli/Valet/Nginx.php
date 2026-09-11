@@ -37,7 +37,7 @@ class Nginx
 
         $this->files->putAsUser(
             static::NGINX_CONF,
-            str_replace(['VALET_USER', 'VALET_HOME_PATH'], [user(), VALET_HOME_PATH], $contents)
+            str_replace(['VALET_USER', 'VALET_GROUP', 'VALET_HOME_PATH'], [user(), user_group(), VALET_HOME_PATH], $contents)
         );
     }
 
@@ -87,7 +87,7 @@ class Nginx
     private function lint(): void
     {
         $this->cli->run(
-            'sudo nginx -c '.static::NGINX_CONF.' -t',
+            'sudo '.BREW_PREFIX.'/bin/nginx -c '.static::NGINX_CONF.' -t',
             function ($exitCode, $outputMessage) {
                 throw new DomainException("Nginx cannot start; please check your nginx.conf [$exitCode: $outputMessage].");
             }

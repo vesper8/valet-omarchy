@@ -75,7 +75,7 @@ class Status
             [
                 'description' => 'Is Homebrew installed?',
                 'check' => function () {
-                    return $this->cli->run('which brew') !== '';
+                    return $this->cli->run('test -x '.escapeshellarg(BREW_BINARY).' && echo yes') !== '';
                 },
                 'debug' => 'Visit https://brew.sh/ for instructions on installing Homebrew.',
             ],
@@ -161,7 +161,7 @@ class Status
     public function isBrewServiceRunningAsRoot(string $name, bool $exactMatch = true): bool
     {
         if (! $this->brewServicesRootOutput) {
-            $this->brewServicesRootOutput = $this->jsonFromCli('brew services info --all --json', true);
+            $this->brewServicesRootOutput = $this->jsonFromCli(BREW_BINARY.' services info --all --json', true);
         }
 
         return $this->isBrewServiceRunningGivenServiceList($this->brewServicesRootOutput, $name, $exactMatch);
@@ -170,7 +170,7 @@ class Status
     public function isBrewServiceRunningAsUser(string $name, bool $exactMatch = true): bool
     {
         if (! $this->brewServicesUserOutput) {
-            $this->brewServicesUserOutput = $this->jsonFromCli('brew services info --all --json', false);
+            $this->brewServicesUserOutput = $this->jsonFromCli(BREW_BINARY.' services info --all --json', false);
         }
 
         return $this->isBrewServiceRunningGivenServiceList($this->brewServicesUserOutput, $name, $exactMatch);

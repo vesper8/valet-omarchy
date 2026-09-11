@@ -11,11 +11,13 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Define constants.
  */
+$operatingSystem = new OperatingSystem;
+
 if (! defined('VALET_HOME_PATH')) {
     if (testing()) {
         define('VALET_HOME_PATH', __DIR__.'/../../tests/config/valet');
     } else {
-        define('VALET_HOME_PATH', $_SERVER['HOME'].'/.config/valet');
+        define('VALET_HOME_PATH', $operatingSystem->userHomePath().'/.config/valet');
     }
 }
 if (! defined('VALET_STATIC_PREFIX')) {
@@ -25,7 +27,15 @@ if (! defined('VALET_STATIC_PREFIX')) {
 define('VALET_LOOPBACK', '127.0.0.1');
 define('VALET_SERVER_PATH', realpath(__DIR__.'/../../server.php'));
 
-define('BREW_PREFIX', (new CommandLine)->runAsUser('printf $(brew --prefix)'));
+$brewBinary = $operatingSystem->findHomebrewBinary();
+
+if (testing() && ! $brewBinary) {
+    define('BREW_BINARY', 'brew');
+    define('BREW_PREFIX', '/usr/local');
+} else {
+    define('BREW_BINARY', $operatingSystem->homebrewBinary());
+    define('BREW_PREFIX', $operatingSystem->homebrewPrefix());
+}
 
 define('ISOLATED_PHP_VERSION', 'ISOLATED_PHP_VERSION');
 
@@ -185,9 +195,29 @@ function starts_with(string $haystack, array|string $needles): bool
  */
 function user(): string
 {
-    if (! isset($_SERVER['SUDO_USER'])) {
-        return $_SERVER['USER'];
-    }
+    return resolve(OperatingSystem::class)->user();
+}
 
-    return $_SERVER['SUDO_USER'];
+/**
+ * Get the primary group of the user running Valet.
+ */
+function user_group(): string
+{
+    return resolve(OperatingSystem::class)->userGroup();
+}
+
+/**
+ * Get the group used for user-owned Homebrew files.
+ */
+function brew_group(): string
+{
+    return resolve(OperatingSystem::class)->homebrewGroup();
+}
+
+/**
+ * Get the user or group written to Valet's sudoers entries.
+ */
+function sudoers_identity(): string
+{
+    return resolve(OperatingSystem::class)->sudoersIdentity();
 }

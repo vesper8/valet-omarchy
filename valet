@@ -7,7 +7,12 @@ SOURCE="${BASH_SOURCE[0]}"
 # do it in pure Bash. So, we'll call into PHP CLI here to resolve.
 if [[ -L "$SOURCE" ]]
 then
-    DIR=$(php -d error_reporting=1 -r "echo dirname(realpath('$SOURCE'));")
+    if [[ "$(uname -s)" = "Linux" ]]
+    then
+        DIR=$(dirname "$(readlink -f "$SOURCE")")
+    else
+        DIR=$(php -d error_reporting=1 -r "echo dirname(realpath('$SOURCE'));")
+    fi
 else
     DIR="$( cd "$( dirname "$SOURCE" )" && pwd )"
 fi
@@ -176,7 +181,7 @@ else
 
     if [[ "$EUID" -ne 0 ]]
     then
-        sudo USER="$USER" --preserve-env "$SOURCE" "$@"
+        sudo --preserve-env=PHP_EXECUTABLE USER="$USER" HOME="$HOME" "$SOURCE" "$@"
         exit
     fi
 

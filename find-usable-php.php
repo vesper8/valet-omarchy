@@ -12,13 +12,19 @@ if (version_compare($linkedPhpVersion, $minimumPhpVersion) >= 0) {
     return;
 }
 
+$brewBinary = findHomebrewBinary();
+
+if (! $brewBinary) {
+    throw new Exception('Sorry, but Homebrew could not be found and no compatible PHP executable is available.');
+}
+
 // If not, let's find it whether we have a version of PHP installed that's 8+;
 // all users that run through this code path will see Valet run more slowly
-$phps = explode(PHP_EOL, trim(shell_exec('brew list --formula | grep php')));
+$phps = explode(PHP_EOL, trim(shell_exec(escapeshellarg($brewBinary).' list --formula | grep php')));
 
 // Normalize version numbers
-$phps = array_reduce($phps, function ($carry, $php) {
-    $carry[$php] = presumePhpVersionFromBrewFormulaName($php);
+$phps = array_reduce($phps, function ($carry, $php) use ($brewBinary) {
+    $carry[$php] = presumePhpVersionFromBrewFormulaName($php, $brewBinary);
 
     return $carry;
 }, []);
@@ -39,7 +45,7 @@ $modernPhps = array_reverse($modernPhps);
 
 // Grab the highest, set as $foundVersion, and output its path
 $foundVersion = reset($modernPhps);
-echo getPhpExecutablePath(array_search($foundVersion, $phps));
+echo getPhpExecutablePath(array_search($foundVersion, $phps), $brewBinary);
 
 /**
  * Function definitions.
@@ -52,9 +58,9 @@ echo getPhpExecutablePath(array_search($foundVersion, $phps));
  * @param  string|null  $phpFormulaName  For example, "php@8.1"
  * @return string
  */
-function getPhpExecutablePath(?string $phpFormulaName = null)
+function getPhpExecutablePath(?string $phpFormulaName, string $brewBinary)
 {
-    $brewPrefix = exec('printf $(brew --prefix)');
+    $brewPrefix = trim((string) shell_exec(escapeshellarg($brewBinary).' --prefix'));
 
     // Check the default `/opt/homebrew/opt/php@8.1/bin/php` location first
     if (file_exists($brewPrefix."/opt/{$phpFormulaName}/bin/php")) {
@@ -70,11 +76,11 @@ function getPhpExecutablePath(?string $phpFormulaName = null)
     throw new Exception('Cannot find an executable path for provided PHP version: '.$phpFormulaName);
 }
 
-function presumePhpVersionFromBrewFormulaName(string $formulaName)
+function presumePhpVersionFromBrewFormulaName(string $formulaName, string $brewBinary)
 {
     if ($formulaName === 'php') {
         // Figure out its link
-        $details = json_decode(shell_exec("brew info $formulaName --json"));
+        $details = json_decode(shell_exec(escapeshellarg($brewBinary)." info $formulaName --json"));
 
         if (! empty($details[0]->aliases[0])) {
             $formulaName = $details[0]->aliases[0];
@@ -88,4 +94,25 @@ function presumePhpVersionFromBrewFormulaName(string $formulaName)
     }
 
     return substr($formulaName, strpos($formulaName, '@') + 1);
+}
+
+/**
+ * Find Homebrew without relying exclusively on sudo's PATH.
+ */
+function findHomebrewBinary(): ?string
+{
+    $fromPath = trim((string) shell_exec('command -v brew 2>/dev/null'));
+
+    foreach (array_filter(array_unique([
+        $fromPath,
+        '/opt/homebrew/bin/brew',
+        '/usr/local/bin/brew',
+        '/home/linuxbrew/.linuxbrew/bin/brew',
+    ])) as $candidate) {
+        if (is_file($candidate) && is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+
+    return null;
 }

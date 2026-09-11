@@ -6,6 +6,7 @@ use Valet\Brew;
 use Valet\CommandLine;
 use Valet\Configuration;
 use Valet\Filesystem;
+use Valet\OperatingSystem;
 use Valet\Site;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
@@ -56,6 +57,56 @@ class SiteTest extends TestCase
         $site = resolve(Site::class);
         $certs = $site->getCertificates($certPath);
         $this->assertSame(['helloworld' => 0], $certs->all());
+    }
+
+    public function test_linux_persists_a_custom_loopback_with_systemd()
+    {
+        $brew = Mockery::mock(Brew::class);
+        $config = Mockery::mock(Configuration::class);
+        $cli = Mockery::mock(CommandLine::class);
+        $files = Mockery::mock(Filesystem::class);
+        $servicePath = '/etc/systemd/system/laravel-valet-loopback.service';
+
+        $files->shouldReceive('exists')->once()->with($servicePath)->andReturn(false);
+        $files->shouldReceive('getStub')->once()->with('loopback.service')->andReturn('ExecStart=VALET_LOOPBACK');
+        $files->shouldReceive('put')->once()->with($servicePath, 'ExecStart=127.0.0.2');
+        $cli->shouldReceive('run')->once()->with("sudo /usr/bin/ip address replace '127.0.0.2'/32 dev lo");
+        $cli->shouldReceive('run')->once()->with('sudo /usr/bin/systemctl daemon-reload');
+        $cli->shouldReceive('run')->once()->with('sudo /usr/bin/systemctl enable --now laravel-valet-loopback.service');
+
+        $site = new Site($brew, $config, $cli, $files, new OperatingSystem('Linux'));
+        $site->addLoopbackAlias('127.0.0.2');
+        $site->updateLoopbackPlist('127.0.0.2');
+
+        $this->assertSame($servicePath, $site->plistPath());
+    }
+
+    public function test_linux_trusts_the_ca_in_system_and_chromium_stores()
+    {
+        $brew = Mockery::mock(Brew::class);
+        $config = Mockery::mock(Configuration::class);
+        $cli = Mockery::mock(CommandLine::class);
+        $files = Mockery::mock(Filesystem::class);
+        $operatingSystem = new class('Linux') extends OperatingSystem
+        {
+            public function userHomePath(): string
+            {
+                return '/home/valet-user';
+            }
+        };
+
+        $systemCaPath = '/etc/ca-certificates/trust-source/anchors/laravel-valet-ca.pem';
+        $files->shouldReceive('exists')->times(3)->with('/usr/bin/update-ca-trust')->andReturn(true);
+        $files->shouldReceive('copy')->once()->with('/tmp/valet-ca.pem', $systemCaPath);
+        $files->shouldReceive('isDir')->once()->with('/home/valet-user/.pki/nssdb')->andReturn(true);
+        $cli->shouldReceive('run')->once()->with('sudo /usr/bin/update-ca-trust');
+        $cli->shouldReceive('quietlyAsUser')->once()->with("certutil -D -d 'sql:/home/valet-user/.pki/nssdb' -n 'Laravel Valet CA'");
+        $cli->shouldReceive('runAsUser')->once()->with("certutil -A -d 'sql:/home/valet-user/.pki/nssdb' -n 'Laravel Valet CA' -t 'C,,' -i '/tmp/valet-ca.pem'");
+
+        $site = new Site($brew, $config, $cli, $files, $operatingSystem);
+        $site->trustLinuxCa('/tmp/valet-ca.pem');
+
+        $this->assertSame($systemCaPath, $site->linuxCaPath());
     }
 
     public function test_get_sites_will_return_if_secured()

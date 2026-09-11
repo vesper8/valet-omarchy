@@ -71,8 +71,8 @@ class PhpFpm
 
         // Create FPM Config File from stub
         $contents = str_replace(
-            ['VALET_USER', 'VALET_HOME_PATH', 'valet.sock'],
-            [user(), VALET_HOME_PATH, self::fpmSockName($phpVersion)],
+            ['VALET_USER', 'VALET_GROUP', 'VALET_HOME_PATH', 'valet.sock'],
+            [user(), user_group(), VALET_HOME_PATH, self::fpmSockName($phpVersion)],
             $this->files->getStub('etc-phpfpm-valet.conf')
         );
         $this->files->put($fpmConfigFile, $contents);

@@ -55,7 +55,49 @@ class Diagnose
 
     public ?ProgressBar $progressBar = null;
 
-    public function __construct(public CommandLine $cli, public Filesystem $files) {}
+    public OperatingSystem $operatingSystem;
+
+    public function __construct(public CommandLine $cli, public Filesystem $files, ?OperatingSystem $operatingSystem = null)
+    {
+        $this->operatingSystem = $operatingSystem ?? new OperatingSystem;
+
+        $this->commands = array_map(function ($command) {
+            $command = preg_replace('/^brew(?= )/', BREW_BINARY, $command);
+            $command = preg_replace('/^sudo brew(?= )/', 'sudo '.BREW_BINARY, $command);
+            $command = preg_replace('/^composer(?= )/', BREW_PREFIX.'/bin/composer', $command);
+            $command = preg_replace('/^php(?= )/', BREW_PREFIX.'/bin/php', $command);
+
+            return str_replace('sudo nginx -t', 'sudo '.BREW_PREFIX.'/bin/nginx -t', $command);
+        }, $this->commands);
+
+        if ($this->operatingSystem->isLinux()) {
+            $this->commands = array_values(array_filter($this->commands, function ($command) {
+                foreach ([
+                    'sw_vers',
+                    '/Library/Launch',
+                    '~/Library/Launch',
+                    'ifconfig lo0',
+                ] as $macOnlyCommand) {
+                    if (str_contains($command, $macOnlyCommand)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }));
+
+            array_push($this->commands,
+                'uname -a',
+                'cat /etc/os-release',
+                'systemctl status systemd-resolved --no-pager',
+                'systemctl status homebrew.nginx --no-pager',
+                'systemctl status homebrew.dnsmasq --no-pager',
+                'resolvectl status',
+                'cat /etc/systemd/resolved.conf.d/valet.conf',
+                'ip address show dev lo'
+            );
+        }
+    }
 
     /**
      * Run diagnostics.
@@ -84,7 +126,11 @@ class Diagnose
 
         $this->files->put('valet_diagnostics.txt', $output);
 
-        $this->cli->run('pbcopy < valet_diagnostics.txt');
+        if ($this->operatingSystem->isLinux()) {
+            $this->cli->runAsUser('wl-copy < valet_diagnostics.txt');
+        } else {
+            $this->cli->run('pbcopy < valet_diagnostics.txt');
+        }
 
         $this->files->unlink('valet_diagnostics.txt');
 

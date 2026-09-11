@@ -6,6 +6,7 @@ use Valet\CommandLine;
 use Valet\Configuration;
 use Valet\DnsMasq;
 use Valet\Filesystem;
+use Valet\OperatingSystem;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
 
 use function Valet\resolve;
@@ -67,6 +68,42 @@ class DnsMasqTest extends TestCase
         $dnsMasq = Mockery::mock(DnsMasq::class.'[install]', [resolve(Brew::class), $cli, new Filesystem, $config]);
         $dnsMasq->shouldReceive('install')->with('new');
         $dnsMasq->updateTld('old', 'new');
+    }
+
+    public function test_linux_uses_a_systemd_resolved_route_and_non_privileged_dnsmasq_port()
+    {
+        $brew = Mockery::mock(Brew::class);
+        $cli = Mockery::mock(CommandLine::class);
+        $files = new Filesystem;
+        $config = Mockery::mock(Configuration::class);
+        $config->shouldReceive('read')->andReturn(['loopback' => VALET_LOOPBACK]);
+        $cli->shouldReceive('quietly')->once()->with('sudo systemctl restart systemd-resolved');
+
+        $dnsMasq = new StubForCreatingCustomDnsMasqConfigFiles(
+            $brew,
+            $cli,
+            $files,
+            $config,
+            new OperatingSystem('Linux')
+        );
+        $dnsMasq->resolvedConfigPath = __DIR__.'/output/valet-resolved.conf';
+
+        $dnsMasq->createDnsmasqTldConfigFile('test');
+        $dnsMasq->createTldResolver('test');
+
+        $this->assertSame(
+            'address=/.test/'.VALET_LOOPBACK.PHP_EOL
+            .'address=/.test/::1'.PHP_EOL
+            .'listen-address='.VALET_LOOPBACK.PHP_EOL
+            .'port=5354'.PHP_EOL
+            .'bind-interfaces'.PHP_EOL
+            .'resolv-file=/run/systemd/resolve/resolv.conf'.PHP_EOL,
+            file_get_contents(__DIR__.'/output/tld-test.conf')
+        );
+        $this->assertSame(
+            '[Resolve]'.PHP_EOL.'DNS=127.0.0.1:5354'.PHP_EOL.'Domains=~test'.PHP_EOL,
+            file_get_contents($dnsMasq->resolvedConfigPath)
+        );
     }
 }
 
