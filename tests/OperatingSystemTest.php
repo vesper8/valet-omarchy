@@ -1,7 +1,10 @@
 <?php
 
+use Illuminate\Container\Container;
 use Valet\OperatingSystem;
 use Yoast\PHPUnitPolyfills\TestCases\TestCase;
+
+use function Valet\brew_command_as_root;
 
 class OperatingSystemTest extends TestCase
 {
@@ -41,5 +44,22 @@ class OperatingSystemTest extends TestCase
         } else {
             $_SERVER['HOME'] = $originalHome;
         }
+    }
+
+    public function test_linux_root_brew_commands_keep_the_users_cache()
+    {
+        Container::setInstance(new Container);
+        Container::getInstance()->instance(OperatingSystem::class, new class('Linux') extends OperatingSystem
+        {
+            public function userHomePath(): string
+            {
+                return '/home/valet-user';
+            }
+        });
+
+        $this->assertSame(
+            "sudo HOMEBREW_CACHE='/home/valet-user/.cache/Homebrew' XDG_CACHE_HOME='/home/valet-user/.cache' brew services start nginx",
+            brew_command_as_root('services start nginx')
+        );
     }
 }

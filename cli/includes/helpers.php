@@ -27,9 +27,7 @@ if (! defined('VALET_STATIC_PREFIX')) {
 define('VALET_LOOPBACK', '127.0.0.1');
 define('VALET_SERVER_PATH', realpath(__DIR__.'/../../server.php'));
 
-$brewBinary = $operatingSystem->findHomebrewBinary();
-
-if (testing() && ! $brewBinary) {
+if (testing()) {
     define('BREW_BINARY', 'brew');
     define('BREW_PREFIX', '/usr/local');
 } else {
@@ -220,4 +218,21 @@ function brew_group(): string
 function sudoers_identity(): string
 {
     return resolve(OperatingSystem::class)->sudoersIdentity();
+}
+
+/**
+ * Build a Homebrew command that runs as root without losing Linuxbrew's cache.
+ */
+function brew_command_as_root(string $arguments, bool $sudo = true): string
+{
+    $operatingSystem = resolve(OperatingSystem::class);
+    $environment = '';
+
+    if ($operatingSystem->isLinux()) {
+        $home = $operatingSystem->userHomePath();
+        $environment = 'HOMEBREW_CACHE='.escapeshellarg($home.'/.cache/Homebrew').' '
+            .'XDG_CACHE_HOME='.escapeshellarg($home.'/.cache').' ';
+    }
+
+    return ($sudo ? 'sudo ' : '').$environment.BREW_BINARY.' '.$arguments;
 }

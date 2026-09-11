@@ -10,10 +10,12 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\EventDispatcher\EventDispatcher;
 use Valet\Drivers\ValetDriver;
+use Valet\OperatingSystem;
 
 use function Valet\info;
 use function Valet\output;
 use function Valet\table;
+use function Valet\testing;
 use function Valet\warning;
 use function Valet\writer;
 
@@ -31,7 +33,12 @@ if (file_exists(__DIR__.'/../vendor/autoload.php')) {
 /**
  * Create the application.
  */
-Container::setInstance(new Container);
+$container = new Container;
+Container::setInstance($container);
+
+if (testing()) {
+    $container->instance(OperatingSystem::class, new OperatingSystem('Darwin'));
+}
 
 $version = '4.12.0';
 
@@ -102,6 +109,27 @@ $app->command('status', function (OutputInterface $output) {
 })->descriptions('Output the status of Valet and its installed services and config.');
 
 /**
+ * Install the sudoers.d entries so password is no longer required.
+ *
+ * This command must remain available before the first Valet installation.
+ */
+$app->command('trust [--off]', function (OutputInterface $output, $off) {
+    if ($off) {
+        Brew::removeSudoersEntry();
+        Valet::removeSudoersEntry();
+
+        return info('Sudoers entries have been removed for Brew and Valet.');
+    }
+
+    Brew::createSudoersEntry();
+    Valet::createSudoersEntry();
+
+    info('Sudoers entries have been added for Brew and Valet.');
+})->descriptions('Add sudoers files for Brew and Valet to make Valet commands run without passwords', [
+    '--off' => 'Remove the sudoers files so normal sudo password prompts are required.',
+]);
+
+/**
  * Most commands are available only if valet is installed.
  */
 if (is_dir(VALET_HOME_PATH)) {
@@ -158,8 +186,8 @@ if (is_dir(VALET_HOME_PATH)) {
 
         Configuration::updateKey('loopback', $loopback);
 
-        DnsMasq::refreshConfiguration();
         Site::aliasLoopback($oldLoopback, $loopback);
+        DnsMasq::refreshConfiguration();
         Site::resecureForNewConfiguration(['loopback' => $oldLoopback], ['loopback' => $loopback]);
         PhpFpm::restart();
         Nginx::installServer();
@@ -597,25 +625,6 @@ if (is_dir(VALET_HOME_PATH)) {
             output('Upgrade instructions can be found in the docs: https://laravel.com/docs/valet#upgrading-valet');
         }
     }, ['latest'])->descriptions('Determine if this is the latest version of Valet');
-
-    /**
-     * Install the sudoers.d entries so password is no longer required.
-     */
-    $app->command('trust [--off]', function (OutputInterface $output, $off) {
-        if ($off) {
-            Brew::removeSudoersEntry();
-            Valet::removeSudoersEntry();
-
-            return info('Sudoers entries have been removed for Brew and Valet.');
-        }
-
-        Brew::createSudoersEntry();
-        Valet::createSudoersEntry();
-
-        info('Sudoers entries have been added for Brew and Valet.');
-    })->descriptions('Add sudoers files for Brew and Valet to make Valet commands run without passwords', [
-        '--off' => 'Remove the sudoers files so normal sudo password prompts are required.',
-    ]);
 
     /**
      * Allow the user to change the version of php Valet uses.

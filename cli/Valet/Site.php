@@ -726,6 +726,7 @@ class Site
 
         $this->files->copy($caPemPath, $systemCaPath);
         $this->cli->run('sudo '.$this->linuxCaUpdateCommand());
+        $this->trustLinuxbrewCa($caPemPath);
         $this->trustCertificateInLinuxNssDatabases($caPemPath, 'Laravel Valet CA');
     }
 
@@ -740,6 +741,8 @@ class Site
             $this->files->unlink($systemCaPath);
             $this->cli->run('sudo '.$this->linuxCaUpdateCommand());
         }
+
+        $this->untrustLinuxbrewCa();
 
         foreach ($this->linuxNssDatabasePaths() as $databasePath) {
             $this->cli->quietlyAsUser(sprintf(
@@ -779,6 +782,62 @@ class Site
                 escapeshellarg($certificatePath)
             ));
         }
+    }
+
+    /**
+     * Trust Valet's CA in the certificate bundle used by Linuxbrew PHP and curl.
+     */
+    public function trustLinuxbrewCa(string $caPemPath): void
+    {
+        $bundlePath = $this->linuxbrewCaBundlePath();
+
+        if (! $this->files->exists($bundlePath)) {
+            return;
+        }
+
+        $contents = $this->withoutValetCaBlock($this->files->get($bundlePath));
+        $certificate = trim($this->files->get($caPemPath));
+        $contents = rtrim($contents).PHP_EOL
+            .'# Laravel Valet CA - BEGIN'.PHP_EOL
+            .$certificate.PHP_EOL
+            .'# Laravel Valet CA - END'.PHP_EOL;
+
+        $this->files->putAsUser($bundlePath, $contents);
+    }
+
+    /**
+     * Remove Valet's managed CA block from Linuxbrew's certificate bundle.
+     */
+    public function untrustLinuxbrewCa(): void
+    {
+        $bundlePath = $this->linuxbrewCaBundlePath();
+
+        if (! $this->files->exists($bundlePath)) {
+            return;
+        }
+
+        $contents = $this->files->get($bundlePath);
+        $this->files->putAsUser($bundlePath, $this->withoutValetCaBlock($contents));
+    }
+
+    /**
+     * Remove a previously managed Valet CA block from a certificate bundle.
+     */
+    private function withoutValetCaBlock(string $contents): string
+    {
+        return preg_replace(
+            '/\n?# Laravel Valet CA - BEGIN\R.*?# Laravel Valet CA - END\R?/s',
+            PHP_EOL,
+            $contents
+        );
+    }
+
+    /**
+     * Get Linuxbrew's shared CA bundle path.
+     */
+    public function linuxbrewCaBundlePath(): string
+    {
+        return BREW_PREFIX.'/etc/ca-certificates/cert.pem';
     }
 
     /**

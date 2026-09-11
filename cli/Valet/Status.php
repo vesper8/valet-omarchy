@@ -161,7 +161,7 @@ class Status
     public function isBrewServiceRunningAsRoot(string $name, bool $exactMatch = true): bool
     {
         if (! $this->brewServicesRootOutput) {
-            $this->brewServicesRootOutput = $this->jsonFromCli(BREW_BINARY.' services info --all --json', true);
+            $this->brewServicesRootOutput = $this->jsonFromCli(brew_command_as_root('services info --all --json', false), true);
         }
 
         return $this->isBrewServiceRunningGivenServiceList($this->brewServicesRootOutput, $name, $exactMatch);

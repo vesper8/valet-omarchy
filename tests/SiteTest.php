@@ -97,6 +97,7 @@ class SiteTest extends TestCase
 
         $systemCaPath = '/etc/ca-certificates/trust-source/anchors/laravel-valet-ca.pem';
         $files->shouldReceive('exists')->times(3)->with('/usr/bin/update-ca-trust')->andReturn(true);
+        $files->shouldReceive('exists')->once()->with(BREW_PREFIX.'/etc/ca-certificates/cert.pem')->andReturn(false);
         $files->shouldReceive('copy')->once()->with('/tmp/valet-ca.pem', $systemCaPath);
         $files->shouldReceive('isDir')->once()->with('/home/valet-user/.pki/nssdb')->andReturn(true);
         $cli->shouldReceive('run')->once()->with('sudo /usr/bin/update-ca-trust');
@@ -107,6 +108,31 @@ class SiteTest extends TestCase
         $site->trustLinuxCa('/tmp/valet-ca.pem');
 
         $this->assertSame($systemCaPath, $site->linuxCaPath());
+    }
+
+    public function test_linux_trusts_the_ca_in_linuxbrews_certificate_bundle()
+    {
+        $files = Mockery::mock(Filesystem::class);
+        $bundlePath = BREW_PREFIX.'/etc/ca-certificates/cert.pem';
+        $files->shouldReceive('exists')->once()->with($bundlePath)->andReturn(true);
+        $files->shouldReceive('get')->once()->with($bundlePath)->andReturn(
+            "existing roots\n# Laravel Valet CA - BEGIN\nold certificate\n# Laravel Valet CA - END\n"
+        );
+        $files->shouldReceive('get')->once()->with('/tmp/new-ca.pem')->andReturn("new certificate\n");
+        $files->shouldReceive('putAsUser')->once()->with(
+            $bundlePath,
+            "existing roots\n# Laravel Valet CA - BEGIN\nnew certificate\n# Laravel Valet CA - END\n"
+        );
+
+        $site = new Site(
+            Mockery::mock(Brew::class),
+            Mockery::mock(Configuration::class),
+            Mockery::mock(CommandLine::class),
+            $files,
+            new OperatingSystem('Linux')
+        );
+
+        $site->trustLinuxbrewCa('/tmp/new-ca.pem');
     }
 
     public function test_get_sites_will_return_if_secured()

@@ -21,6 +21,15 @@ use function Valet\swap;
  */
 class CliTest extends BaseApplicationTestCase
 {
+    public function test_trust_command_is_available_before_valet_is_installed()
+    {
+        (new Filesystem)->rmDirAndContents(VALET_HOME_PATH);
+
+        [$app] = $this->appAndTester();
+
+        $this->assertTrue($app->has('trust'));
+    }
+
     public function test_tld_command_reads_tld()
     {
         [$app, $tester] = $this->appAndTester();

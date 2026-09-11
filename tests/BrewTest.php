@@ -249,7 +249,7 @@ class BrewTest extends TestCase
         $cli->shouldReceive('runAsUser')->once()->with('brew info dnsmasq --json=v2')->andReturn('{"formulae":[{"name":"dnsmasq","full_name":"dnsmasq","aliases":[],"versioned_formulae":[],"versions":{"stable":"1"},"installed":[{"version":"1"}]}]}');
         $cli->shouldReceive('quietly')->once()->with('brew services stop dnsmasq');
         $cli->shouldReceive('quietly')->once()->with('sudo brew services stop dnsmasq');
-        $cli->shouldReceive('quietly')->once()->with('sudo brew services start dnsmasq');
+        $cli->shouldReceive('run')->once()->with('sudo brew services start dnsmasq', Mockery::type('Closure'));
         swap(CommandLine::class, $cli);
         resolve(Brew::class)->restartService('dnsmasq');
     }

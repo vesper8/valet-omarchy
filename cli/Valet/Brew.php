@@ -205,9 +205,11 @@ class Brew
                 // first we ensure that the service is not incorrectly running as non-root
                 $this->cli->quietly(BREW_BINARY.' services stop '.$service);
                 // stop the actual/correct sudo version
-                $this->cli->quietly('sudo '.BREW_BINARY.' services stop '.$service);
+                $this->cli->quietly(brew_command_as_root('services stop '.$service));
                 // start correctly as root
-                $this->cli->quietly('sudo '.BREW_BINARY.' services start '.$service);
+                $this->cli->run(brew_command_as_root('services start '.$service), function ($exitCode, $errorOutput) use ($service) {
+                    throw new DomainException("Brew was unable to start [{$service}]: {$errorOutput}");
+                });
             }
         }
     }
@@ -227,7 +229,7 @@ class Brew
                 $this->cli->quietly(BREW_BINARY.' services stop '.$service);
 
                 // stop the sudo version
-                $this->cli->quietly('sudo '.BREW_BINARY.' services stop '.$service);
+                $this->cli->quietly(brew_command_as_root('services stop '.$service));
 
                 // Restore ownership after Homebrew runs the service as root.
                 $directories = [
@@ -433,7 +435,7 @@ class Brew
 
         return collect(array_filter(explode(PHP_EOL, $asUser
             ? $this->cli->runAsUser($command, $onError)
-            : $this->cli->run('sudo '.$command, $onError)
+            : $this->cli->run(brew_command_as_root('services list').' | grep started | awk \'{ print $1; }\'', $onError)
         )));
     }
 
