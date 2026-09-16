@@ -70,7 +70,6 @@ Ensure Composer's global binary directory is in `PATH`. Install Valet's sudoers 
 ```bash
 export PATH="$(composer global config bin-dir --absolute):$PATH"
 ln -s "$PWD/valet" "$(brew --prefix)/bin/valet"
-hash -r
 valet trust
 valet install
 ```

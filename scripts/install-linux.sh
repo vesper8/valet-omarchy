@@ -144,8 +144,6 @@ else
     ln -s "$VALET_SOURCE/valet" "$VALET_BREW_BIN"
 fi
 
-hash -r
-
 printf '\nInstalling Valet privilege rules and services...\n'
 "$VALET_BREW_BIN" trust
 "$VALET_BREW_BIN" install

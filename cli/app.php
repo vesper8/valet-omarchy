@@ -19,15 +19,32 @@ use function Valet\testing;
 use function Valet\warning;
 use function Valet\writer;
 
-/**
- * Load correct autoloader depending on install location.
- */
-if (file_exists(__DIR__.'/../vendor/autoload.php')) {
-    require_once __DIR__.'/../vendor/autoload.php';
-} elseif (file_exists(__DIR__.'/../../../autoload.php')) {
-    require_once __DIR__.'/../../../autoload.php';
-} else {
-    require_once getenv('HOME').'/.composer/vendor/autoload.php';
+require_once __DIR__.'/includes/composer-autoload.php';
+
+// sudo can change HOME to /root. Resolve the account that invoked Valet so a
+// Composer path repository can find that user's global vendor directory.
+$userHome = getenv('HOME') ?: null;
+if (($sudoUser = getenv('SUDO_USER')) && function_exists('posix_getpwnam')
+    && ($account = posix_getpwnam($sudoUser))) {
+    $userHome = $account['dir'];
+}
+
+$autoloadCandidates = \Valet\composer_autoload_candidates(
+    __DIR__,
+    $userHome,
+    getenv('COMPOSER_HOME') ?: null,
+    getenv('XDG_CONFIG_HOME') ?: null
+);
+
+foreach ($autoloadCandidates as $autoloadPath) {
+    if (file_exists($autoloadPath)) {
+        require_once $autoloadPath;
+        break;
+    }
+}
+
+if (! isset($autoloadPath) || ! file_exists($autoloadPath)) {
+    throw new RuntimeException('Could not find the Composer autoloader for Valet. Run composer global require laravel/valet from your user account.');
 }
 
 /**
